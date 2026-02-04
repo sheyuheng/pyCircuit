@@ -224,26 +224,6 @@ static void ensureParentDirExists(const std::string &path) {
   }
 }
 
-static void splitFrontendStages(pyc::cpp::PipeviewTimeline &t) {
-  if (t.decode_cycle == 0)
-    return;
-  if (t.rename_cycle == 0)
-    t.rename_cycle = t.decode_cycle + 1;
-  if (t.dispatch_cycle == 0)
-    t.dispatch_cycle = t.decode_cycle + 2;
-
-  std::uint64_t issue = t.issue_cycle != 0 ? t.issue_cycle : t.dispatch_cycle;
-  const std::uint64_t min_issue = t.dispatch_cycle + 1;
-  if (issue < min_issue) {
-    const std::uint64_t delta = min_issue - issue;
-    t.issue_cycle = issue + delta;
-    if (t.complete_cycle != 0)
-      t.complete_cycle += delta;
-    if (t.retire_cycle != 0)
-      t.retire_cycle += delta;
-  }
-}
-
 static void emitReport(const std::string &program_path, std::uint64_t cycles, std::uint64_t committed,
                        const std::array<std::uint64_t, static_cast<std::size_t>(UopClass::Count)> &uop_counts) {
   std::uint64_t total_uops = 0;
@@ -370,6 +350,8 @@ static bool runProgram(const char *name, const char *memhPath, std::uint64_t boo
       case ST_ID: {
         if (in_flight.has_value()) {
           in_flight->decode_cycle = cycle;
+          in_flight->rename_cycle = cycle;
+          in_flight->dispatch_cycle = cycle;
         }
         break;
       }
@@ -404,8 +386,6 @@ static bool runProgram(const char *name, const char *memhPath, std::uint64_t boo
           }
           name_oss << " val=0x" << std::hex << value << std::dec;
           in_flight->name = name_oss.str();
-
-          splitFrontendStages(*in_flight);
 
           if (pipeview_writer.has_value()) {
             if (!pipeview_writer->write(*in_flight)) {

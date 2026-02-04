@@ -17,24 +17,23 @@ struct MulticlockRegs {
   pyc::cpp::Wire<8> v4{};
   pyc::cpp::Wire<8> v5{};
   pyc::cpp::Wire<1> v6{};
-  pyc::cpp::Wire<1> en__multiclock_regs__L12{};
   pyc::cpp::Wire<8> a__next{};
   pyc::cpp::Wire<8> v7{};
   pyc::cpp::Wire<8> a{};
-  pyc::cpp::Wire<8> a__multiclock_regs__L14{};
+  pyc::cpp::Wire<8> a__multiclock_regs__L12{};
   pyc::cpp::Wire<8> v8{};
   pyc::cpp::Wire<8> b__next{};
   pyc::cpp::Wire<8> v9{};
   pyc::cpp::Wire<8> b{};
-  pyc::cpp::Wire<8> b__multiclock_regs__L18{};
+  pyc::cpp::Wire<8> b__multiclock_regs__L16{};
   pyc::cpp::Wire<8> v10{};
 
   pyc::cpp::pyc_reg<8> v7_inst;
   pyc::cpp::pyc_reg<8> v9_inst;
 
   MulticlockRegs() :
-      v7_inst(clk_a, rst_a, en__multiclock_regs__L12, a__next, v5, v7),
-      v9_inst(clk_b, rst_b, en__multiclock_regs__L12, b__next, v5, v9) {
+      v7_inst(clk_a, rst_a, v6, a__next, v5, v7),
+      v9_inst(clk_b, rst_b, v6, b__next, v5, v9) {
     eval();
   }
 
@@ -49,21 +48,20 @@ struct MulticlockRegs {
 
   inline void eval_comb_pass() {
     eval_comb_0();
-    en__multiclock_regs__L12 = v6;
     a = v7;
-    a__multiclock_regs__L14 = a;
-    v8 = (a__multiclock_regs__L14 + v4);
+    a__multiclock_regs__L12 = a;
+    v8 = (a__multiclock_regs__L12 + v4);
     a__next = v8;
     b = v9;
-    b__multiclock_regs__L18 = b;
-    v10 = (b__multiclock_regs__L18 + v4);
+    b__multiclock_regs__L16 = b;
+    v10 = (b__multiclock_regs__L16 + v4);
     b__next = v10;
   }
 
   void eval() {
     eval_comb_pass();
-    a_count = a__multiclock_regs__L14;
-    b_count = b__multiclock_regs__L18;
+    a_count = a__multiclock_regs__L12;
+    b_count = b__multiclock_regs__L16;
   }
 
   void tick() {

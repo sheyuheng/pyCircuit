@@ -25,59 +25,58 @@ def build(m: Circuit, *, mem_bytes: int = (1 << 20)) -> None:
     boot_pc = m.in_wire("boot_pc", width=64)
     boot_sp = m.in_wire("boot_sp", width=64)
 
-    c = m.const_wire
     consts = make_consts(m)
 
     # --- core state regs (named) ---
     with m.scope("state"):
         state = CoreState(
-            stage=m.out("stage", clk=clk, rst=rst, width=3, init=c(ST_IF, width=3), en=consts.one1),
+            stage=m.out("stage", clk=clk, rst=rst, width=3, init=ST_IF, en=consts.one1),
             pc=m.out("pc", clk=clk, rst=rst, width=64, init=boot_pc, en=consts.one1),
-            br_kind=m.out("br_kind", clk=clk, rst=rst, width=2, init=c(BK_FALL, width=2), en=consts.one1),
+            br_kind=m.out("br_kind", clk=clk, rst=rst, width=2, init=BK_FALL, en=consts.one1),
             br_base_pc=m.out("br_base_pc", clk=clk, rst=rst, width=64, init=boot_pc, en=consts.one1),
-            br_off=m.out("br_off", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            commit_cond=m.out("commit_cond", clk=clk, rst=rst, width=1, init=consts.zero1, en=consts.one1),
-            commit_tgt=m.out("commit_tgt", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            cycles=m.out("cycles", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            halted=m.out("halted", clk=clk, rst=rst, width=1, init=consts.zero1, en=consts.one1),
+            br_off=m.out("br_off", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            commit_cond=m.out("commit_cond", clk=clk, rst=rst, width=1, init=0, en=consts.one1),
+            commit_tgt=m.out("commit_tgt", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            cycles=m.out("cycles", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            halted=m.out("halted", clk=clk, rst=rst, width=1, init=0, en=consts.one1),
         )
 
     with m.scope("ifid"):
-        pipe_ifid = IfIdRegs(window=m.out("window", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1))
+        pipe_ifid = IfIdRegs(window=m.out("window", clk=clk, rst=rst, width=64, init=0, en=consts.one1))
 
     with m.scope("idex"):
         pipe_idex = IdExRegs(
-            op=m.out("op", clk=clk, rst=rst, width=6, init=c(0, width=6), en=consts.one1),
-            len_bytes=m.out("len_bytes", clk=clk, rst=rst, width=3, init=consts.zero3, en=consts.one1),
-            regdst=m.out("regdst", clk=clk, rst=rst, width=6, init=c(REG_INVALID, width=6), en=consts.one1),
-            srcl=m.out("srcl", clk=clk, rst=rst, width=6, init=c(REG_INVALID, width=6), en=consts.one1),
-            srcr=m.out("srcr", clk=clk, rst=rst, width=6, init=c(REG_INVALID, width=6), en=consts.one1),
-            srcp=m.out("srcp", clk=clk, rst=rst, width=6, init=c(REG_INVALID, width=6), en=consts.one1),
-            imm=m.out("imm", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            srcl_val=m.out("srcl_val", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            srcr_val=m.out("srcr_val", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            srcp_val=m.out("srcp_val", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
+            op=m.out("op", clk=clk, rst=rst, width=6, init=0, en=consts.one1),
+            len_bytes=m.out("len_bytes", clk=clk, rst=rst, width=3, init=0, en=consts.one1),
+            regdst=m.out("regdst", clk=clk, rst=rst, width=6, init=REG_INVALID, en=consts.one1),
+            srcl=m.out("srcl", clk=clk, rst=rst, width=6, init=REG_INVALID, en=consts.one1),
+            srcr=m.out("srcr", clk=clk, rst=rst, width=6, init=REG_INVALID, en=consts.one1),
+            srcp=m.out("srcp", clk=clk, rst=rst, width=6, init=REG_INVALID, en=consts.one1),
+            imm=m.out("imm", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            srcl_val=m.out("srcl_val", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            srcr_val=m.out("srcr_val", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            srcp_val=m.out("srcp_val", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
         )
 
     with m.scope("exmem"):
         pipe_exmem = ExMemRegs(
-            op=m.out("op", clk=clk, rst=rst, width=6, init=c(0, width=6), en=consts.one1),
-            len_bytes=m.out("len_bytes", clk=clk, rst=rst, width=3, init=consts.zero3, en=consts.one1),
-            regdst=m.out("regdst", clk=clk, rst=rst, width=6, init=c(REG_INVALID, width=6), en=consts.one1),
-            alu=m.out("alu", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            is_load=m.out("is_load", clk=clk, rst=rst, width=1, init=consts.zero1, en=consts.one1),
-            is_store=m.out("is_store", clk=clk, rst=rst, width=1, init=consts.zero1, en=consts.one1),
-            size=m.out("size", clk=clk, rst=rst, width=3, init=consts.zero3, en=consts.one1),
-            addr=m.out("addr", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
-            wdata=m.out("wdata", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
+            op=m.out("op", clk=clk, rst=rst, width=6, init=0, en=consts.one1),
+            len_bytes=m.out("len_bytes", clk=clk, rst=rst, width=3, init=0, en=consts.one1),
+            regdst=m.out("regdst", clk=clk, rst=rst, width=6, init=REG_INVALID, en=consts.one1),
+            alu=m.out("alu", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            is_load=m.out("is_load", clk=clk, rst=rst, width=1, init=0, en=consts.one1),
+            is_store=m.out("is_store", clk=clk, rst=rst, width=1, init=0, en=consts.one1),
+            size=m.out("size", clk=clk, rst=rst, width=3, init=0, en=consts.one1),
+            addr=m.out("addr", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
+            wdata=m.out("wdata", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
         )
 
     with m.scope("memwb"):
         pipe_memwb = MemWbRegs(
-            op=m.out("op", clk=clk, rst=rst, width=6, init=c(0, width=6), en=consts.one1),
-            len_bytes=m.out("len_bytes", clk=clk, rst=rst, width=3, init=consts.zero3, en=consts.one1),
-            regdst=m.out("regdst", clk=clk, rst=rst, width=6, init=c(REG_INVALID, width=6), en=consts.one1),
-            value=m.out("value", clk=clk, rst=rst, width=64, init=consts.zero64, en=consts.one1),
+            op=m.out("op", clk=clk, rst=rst, width=6, init=0, en=consts.one1),
+            len_bytes=m.out("len_bytes", clk=clk, rst=rst, width=3, init=0, en=consts.one1),
+            regdst=m.out("regdst", clk=clk, rst=rst, width=6, init=REG_INVALID, en=consts.one1),
+            value=m.out("value", clk=clk, rst=rst, width=64, init=0, en=consts.one1),
         )
 
     # --- register files ---
@@ -91,13 +90,13 @@ def build(m: Circuit, *, mem_bytes: int = (1 << 20)) -> None:
     rf = RegFiles(gpr=gpr, t=t, u=u)
 
     # --- stage control ---
-    stage_is_if = state.stage.eq(c(ST_IF, width=3))
-    stage_is_id = state.stage.eq(c(ST_ID, width=3))
-    stage_is_ex = state.stage.eq(c(ST_EX, width=3))
-    stage_is_mem = state.stage.eq(c(ST_MEM, width=3))
-    stage_is_wb = state.stage.eq(c(ST_WB, width=3))
+    stage_is_if = state.stage == ST_IF
+    stage_is_id = state.stage == ST_ID
+    stage_is_ex = state.stage == ST_EX
+    stage_is_mem = state.stage == ST_MEM
+    stage_is_wb = state.stage == ST_WB
 
-    halt_set = stage_is_wb & (~state.halted) & (pipe_memwb.op.eq(c(OP_EBREAK, width=6)) | pipe_memwb.op.eq(c(OP_INVALID, width=6)))
+    halt_set = stage_is_wb & (~state.halted) & ((pipe_memwb.op == OP_EBREAK) | (pipe_memwb.op == OP_INVALID))
     stop = state.halted | halt_set
     active = ~stop
 
@@ -108,12 +107,19 @@ def build(m: Circuit, *, mem_bytes: int = (1 << 20)) -> None:
     do_wb = stage_is_wb & active
 
     # --- unified byte memory (instruction + data) ---
-    mem_raddr = do_if.select(state.pc, (stage_is_mem & active & pipe_exmem.is_load).select(pipe_exmem.addr, consts.zero64))
+    mem_raddr = 0
+    if stage_is_mem & active & pipe_exmem.is_load:
+        mem_raddr = pipe_exmem.addr
+    if do_if:
+        mem_raddr = state.pc
     mem_wvalid = stage_is_mem & active & pipe_exmem.is_store
     mem_waddr = pipe_exmem.addr
     mem_wdata = pipe_exmem.wdata
-    mem_wstrb = pipe_exmem.size.eq(c(8, width=3)).select(c(0xFF, width=8), consts.zero8)
-    mem_wstrb = pipe_exmem.size.eq(c(4, width=3)).select(c(0x0F, width=8), mem_wstrb)
+    mem_wstrb = 0
+    if pipe_exmem.size == 8:
+        mem_wstrb = 0xFF
+    if pipe_exmem.size == 4:
+        mem_wstrb = 0x0F
 
     mem_rdata = build_byte_mem(
         m,
@@ -132,7 +138,7 @@ def build(m: Circuit, *, mem_bytes: int = (1 << 20)) -> None:
     build_if_stage(m, do_if=do_if, ifid_window=pipe_ifid.window, mem_rdata=mem_rdata)
     build_id_stage(m, do_id=do_id, ifid=pipe_ifid, idex=pipe_idex, rf=rf, consts=consts)
     build_ex_stage(m, do_ex=do_ex, pc=state.pc, idex=pipe_idex, exmem=pipe_exmem, consts=consts)
-    build_mem_stage(m, do_mem=do_mem, exmem=pipe_exmem, memwb=pipe_memwb, mem_rdata=mem_rdata, consts=consts)
+    build_mem_stage(m, do_mem=do_mem, exmem=pipe_exmem, memwb=pipe_memwb, mem_rdata=mem_rdata)
     build_wb_stage(
         m,
         do_wb=do_wb,
@@ -146,7 +152,6 @@ def build(m: Circuit, *, mem_bytes: int = (1 << 20)) -> None:
         state=state,
         memwb=pipe_memwb,
         rf=rf,
-        consts=consts,
     )
 
     # --- outputs ---

@@ -43,78 +43,86 @@ class Wire:
         """Stage-friendly sugar: a Wire's value is itself."""
         return self
 
-    def _coerce(self, other: Union["Wire", "Reg", Signal, int]) -> Signal:
-        if isinstance(other, Reg):
-            if other.q.m is not self.m:
+    def _as_wire(self, v: Union["Wire", "Reg", Signal, int], *, width: int | None) -> "Wire":
+        if isinstance(v, Reg):
+            v = v.q
+        if isinstance(v, Wire):
+            if v.m is not self.m:
                 raise ValueError("cannot combine wires from different modules")
-            return other.q.sig
-        if isinstance(other, Wire):
-            if other.m is not self.m:
-                raise ValueError("cannot combine wires from different modules")
-            return other.sig
-        if isinstance(other, Signal):
-            return other
+            return v
+        if isinstance(v, Signal):
+            return Wire(self.m, v)
+        if isinstance(v, int):
+            if width is None:
+                width = self.width
+            return self.m.const_wire(int(v), width=int(width))
+        raise TypeError(f"unsupported operand type: {type(v).__name__}")
+
+    def _promote2(self, other: Union["Wire", "Reg", Signal, int]) -> tuple["Wire", "Wire"]:
+        """Promote operands to a common width (zero-extend smaller operand)."""
+        a = self._as_wire(self, width=None)
         if isinstance(other, int):
-            return self.m.const(other, width=self.width)
-        raise TypeError(f"unsupported operand type: {type(other).__name__}")
+            b = self._as_wire(int(other), width=a.width)
+        else:
+            b = self._as_wire(other, width=None)
+        out_w = max(a.width, b.width)
+        if a.width != out_w:
+            a = a.zext(width=out_w)
+        if b.width != out_w:
+            b = b.zext(width=out_w)
+        return a, b
 
     def __add__(self, other: Union["Wire", "Reg", Signal, int]) -> "Wire":
-        b = self._coerce(other)
-        return Wire(self.m, self.m.add(self.sig, b))
+        a, b = self._promote2(other)
+        return Wire(self.m, self.m.add(a.sig, b.sig))
 
     def __and__(self, other: Union["Wire", "Reg", Signal, int]) -> "Wire":
-        b = self._coerce(other)
-        return Wire(self.m, self.m.and_(self.sig, b))
+        a, b = self._promote2(other)
+        return Wire(self.m, self.m.and_(a.sig, b.sig))
 
     def __or__(self, other: Union["Wire", "Reg", Signal, int]) -> "Wire":
-        b = self._coerce(other)
-        return Wire(self.m, self.m.or_(self.sig, b))
+        a, b = self._promote2(other)
+        return Wire(self.m, self.m.or_(a.sig, b.sig))
 
     def __xor__(self, other: Union["Wire", "Reg", Signal, int]) -> "Wire":
-        b = self._coerce(other)
-        return Wire(self.m, self.m.xor(self.sig, b))
+        a, b = self._promote2(other)
+        return Wire(self.m, self.m.xor(a.sig, b.sig))
 
     def __invert__(self) -> "Wire":
         return Wire(self.m, self.m.not_(self.sig))
 
     def eq(self, other: Union["Wire", "Reg", Signal, int]) -> "Wire":
-        b = self._coerce(other)
-        if b.ty != self.ty:
-            raise TypeError(f"eq requires same types, got {self.ty} and {b.ty}")
-        return Wire(self.m, self.m.eq(self.sig, b))
+        a, b = self._promote2(other)
+        return Wire(self.m, self.m.eq(a.sig, b.sig))
 
     def select(self, a: Union["Wire", "Reg", Signal, int], b: Union["Wire", "Reg", Signal, int]) -> "Wire":
         if self.ty != "i1":
             raise TypeError("select() requires a 1-bit selector wire (i1)")
 
-        def as_wire(v: Union[Wire, Reg, Signal, int], *, int_width: int | None) -> Wire:
-            if isinstance(v, Reg):
-                v = v.q
-            if isinstance(v, Wire):
-                if v.m is not self.m:
-                    raise ValueError("cannot combine wires from different modules")
-                return v
-            if isinstance(v, Signal):
-                return Wire(self.m, v)
-            if isinstance(v, int):
-                if int_width is None:
-                    raise TypeError("select() cannot infer width for int literal (provide a Wire/Reg operand)")
-                return self.m.const_wire(int(v), width=int_width)
-            raise TypeError(f"unsupported operand type: {type(v).__name__}")
-
+        # At least one operand must provide width.
         if isinstance(a, int) and isinstance(b, int):
             raise TypeError("select() requires at least one Wire/Reg/Signal operand (cannot infer width from two ints)")
 
-        if isinstance(a, int) and not isinstance(b, int):
-            bw = as_wire(b, int_width=None)
-            aw = as_wire(a, int_width=bw.width)
-        elif isinstance(b, int) and not isinstance(a, int):
-            aw = as_wire(a, int_width=None)
-            bw = as_wire(b, int_width=aw.width)
-        else:
-            aw = as_wire(a, int_width=None)
-            bw = as_wire(b, int_width=None)
+        aw: Wire | None = None
+        bw: Wire | None = None
+        if not isinstance(a, int):
+            aw = self._as_wire(a, width=None)
+        if not isinstance(b, int):
+            bw = self._as_wire(b, width=None)
 
+        if aw is None and bw is None:
+            raise TypeError("select() requires at least one Wire/Reg/Signal operand (cannot infer width)")
+
+        out_w = max(aw.width if aw is not None else 0, bw.width if bw is not None else 0)
+        if aw is None:
+            aw = self._as_wire(int(a), width=out_w)
+        if bw is None:
+            bw = self._as_wire(int(b), width=out_w)
+
+        if aw.width != out_w:
+            aw = aw.zext(width=out_w)
+        if bw.width != out_w:
+            bw = bw.zext(width=out_w)
         return Wire(self.m, self.m.mux(self.sig, aw.sig, bw.sig))
 
     def trunc(self, *, width: int) -> "Wire":
@@ -297,16 +305,6 @@ class Circuit(Module):
         finally:
             self._scope_stack.pop()
 
-    def apply(self, fn: Any, /, *args: Any, name: str | None = None) -> Any:
-        """Call `fn(*args)` under a naming scope (debug-friendly).
-
-        This does not create a true hierarchical module boundary in the current IR,
-        but it provides stable scoped names for any `named()` aliases created inside.
-        """
-        scope = name or getattr(fn, "__name__", "apply")
-        with self.scope(str(scope)):
-            return fn(*args)
-
     def domain(self, name: str) -> ClockDomain:
         return ClockDomain(clk=self.clock(f"{name}_clk"), rst=self.reset(f"{name}_rst"))
 
@@ -344,9 +342,26 @@ class Circuit(Module):
         dst_sig = as_sig(dst)
         if isinstance(src, int):
             src_sig = self.const(int(src), width=_int_width(dst_sig.ty))
-        else:
-            src_sig = as_sig(src)
-        super().assign(dst_sig, src_sig)
+            super().assign(dst_sig, src_sig)
+            return
+
+        src_sig = as_sig(src)
+        if dst_sig.ty == src_sig.ty:
+            super().assign(dst_sig, src_sig)
+            return
+
+        # Implicit integer resizing for convenience (zext smaller, trunc larger).
+        if dst_sig.ty.startswith("i") and src_sig.ty.startswith("i"):
+            dst_w = _int_width(dst_sig.ty)
+            src_w = _int_width(src_sig.ty)
+            if src_w < dst_w:
+                src_sig = super().zext(src_sig, width=dst_w)
+            elif src_w > dst_w:
+                src_sig = super().trunc(src_sig, width=dst_w)
+            super().assign(dst_sig, src_sig)
+            return
+
+        raise TypeError(f"assign requires same types, got {dst_sig.ty} and {src_sig.ty}")
 
     def out(
         self,

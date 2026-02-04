@@ -3,6 +3,7 @@
 #include "pyc/Dialect/PYC/PYCOps.h"
 #include "pyc/Dialect/PYC/PYCTypes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
@@ -127,6 +128,13 @@ static LogicalResult emitComb(pyc::CombOp comb, raw_ostream &os, NameTable &nt) 
     if (auto m = dyn_cast<pyc::MuxOp>(op)) {
       os << "assign " << nt.get(m.getResult()) << " = (" << nt.get(m.getSel()) << " ? " << nt.get(m.getA())
          << " : " << nt.get(m.getB()) << ");\n";
+      continue;
+    }
+    if (auto s = dyn_cast<arith::SelectOp>(op)) {
+      if (!s.getCondition().getType().isInteger(1))
+        return s.emitError("verilog emitter only supports arith.select with i1 condition");
+      os << "assign " << nt.get(s.getResult()) << " = (" << nt.get(s.getCondition()) << " ? " << nt.get(s.getTrueValue())
+         << " : " << nt.get(s.getFalseValue()) << ");\n";
       continue;
     }
     if (auto a = dyn_cast<pyc::AndOp>(op)) {
@@ -282,6 +290,13 @@ static LogicalResult emitFunc(func::FuncOp f, raw_ostream &os, const VerilogEmit
       if (auto comb = dyn_cast<pyc::CombOp>(op)) {
         if (failed(emitComb(comb, os, nt)))
           return failure();
+        continue;
+      }
+      if (auto s = dyn_cast<arith::SelectOp>(op)) {
+        if (!s.getCondition().getType().isInteger(1))
+          return s.emitError("verilog emitter only supports arith.select with i1 condition");
+        os << "assign " << nt.get(s.getResult()) << " = (" << nt.get(s.getCondition()) << " ? " << nt.get(s.getTrueValue())
+           << " : " << nt.get(s.getFalseValue()) << ");\n";
         continue;
       }
       if (auto e = dyn_cast<pyc::EqOp>(op)) {
@@ -476,7 +491,7 @@ static LogicalResult emitFunc(func::FuncOp f, raw_ostream &os, const VerilogEmit
         continue;
       }
 
-      return op.emitError("unsupported op for verilog emission");
+      return op.emitError("unsupported op for verilog emission: ") << op.getName();
     }
   }
 

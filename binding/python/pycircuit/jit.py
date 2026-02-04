@@ -93,7 +93,8 @@ def _emit_scf_yield(m: Circuit, values: list[Wire]) -> None:
 
 def _emit_scf_if_header(m: Circuit, results: list[str], cond: Wire, result_types: list[str]) -> None:
     if not results:
-        raise JitError("internal: scf.if requires results in this frontend")
+        m.emit_line(f"scf.if {cond.ref} {{")
+        return
     res_lhs = ", ".join(results)
     if len(result_types) == 1:
         ty_sig = result_types[0]
@@ -146,6 +147,46 @@ class _Compiler:
         self.source_stem = source_stem
         self.line_offset = int(line_offset)
         self._inline_stack: list[Any] = []
+
+    @staticmethod
+    def _ty_width(ty: str) -> int:
+        if not ty.startswith("i"):
+            raise JitError(f"expected integer type iN, got {ty!r}")
+        try:
+            w = int(ty[1:])
+        except ValueError as e:
+            raise JitError(f"invalid integer type: {ty!r}") from e
+        if w <= 0:
+            raise JitError(f"invalid integer width in type: {ty!r}")
+        return w
+
+    def _coerce_to_type(self, v: Any, *, expected_ty: str, ctx: str) -> Wire:
+        """Coerce a value into a Wire of `expected_ty` (ints become constants)."""
+        if isinstance(v, Reg):
+            v = v.q
+        if isinstance(v, Wire):
+            w = v
+        elif isinstance(v, Signal):
+            w = Wire(self.m, v)
+        elif isinstance(v, bool):
+            w = self.m.const_wire(int(v), width=self._ty_width(expected_ty))
+        elif isinstance(v, int):
+            w = self.m.const_wire(int(v), width=self._ty_width(expected_ty))
+        else:
+            raise JitError(f"{ctx}: expected Wire/Reg/Signal/int, got {type(v).__name__}")
+
+        if w.ty == expected_ty:
+            return w
+
+        if w.ty.startswith("i") and expected_ty.startswith("i"):
+            ew = self._ty_width(expected_ty)
+            if w.width < ew:
+                return w.zext(width=ew)
+            if w.width > ew:
+                return w.trunc(width=ew)
+            return w
+
+        raise JitError(f"{ctx}: type mismatch, got {w.ty} expected {expected_ty}")
 
     def _scoped_name(self, base: str) -> str:
         scoped = base
@@ -552,27 +593,31 @@ class _Compiler:
 
         pre_env = dict(self.env)
         assigned = sorted(_assigned_names(node.body) | _assigned_names(node.orelse))
-        assigned_preexisting = [n for n in assigned if n in pre_env]
-        for name in assigned_preexisting:
-            if not isinstance(pre_env[name], Wire):
-                raise JitError(
-                    f"if assigns {name!r} under a dynamic condition, but it is not a Wire "
-                    "(define it as a Wire before the if, or make the condition compile-time)"
-                )
+        if not assigned:
+            raise JitError("if does not assign any variables under a dynamic condition (use a compile-time condition instead)")
 
-        phi_vars = [n for n in assigned_preexisting if isinstance(pre_env[n], Wire)]
-        if not phi_vars:
-            raise JitError(
-                "if does not update any pre-existing Wire variables; "
-                "initialize the merged variables before the if or use explicit mux/select"
-            )
+        def capture(fn: Any) -> list[str]:
+            start = len(self.m._lines)  # noqa: SLF001
+            fn()
+            lines = self.m._lines[start:]  # noqa: SLF001
+            del self.m._lines[start:]  # noqa: SLF001
+            return lines
 
-        result_types = [_expect_wire(pre_env[n], ctx="if pre-env").ty for n in phi_vars]
-        results = [self.m._tmp() for _ in phi_vars]  # noqa: SLF001
-        _emit_scf_if_header(self.m, results, cond, result_types)
+        def value_ty(v: Any) -> str | None:
+            if isinstance(v, Reg):
+                v = v.q
+            if isinstance(v, Wire):
+                return v.ty
+            if isinstance(v, Signal):
+                return v.ty
+            return None
 
-        # then
-        self.m.push_indent()
+        def int_width(v: int) -> int:
+            if v < 0:
+                raise JitError("cannot infer width for negative integer constant in dynamic if; use m.const_wire(..., width=...)")
+            return max(1, int(v).bit_length())
+
+        # Compile branches first (captured), then infer phi types from their final values.
         then_comp = _Compiler(
             self.m,
             {},
@@ -580,15 +625,18 @@ class _Compiler:
             source_stem=self.source_stem,
             line_offset=self.line_offset,
         )
+        then_comp._inline_stack = list(self._inline_stack)
         then_comp.env = dict(pre_env)
-        then_comp.compile_block(node.body)
-        then_vals = [_expect_wire(then_comp.env[n], ctx="if then") for n in phi_vars]
-        _emit_scf_yield(self.m, then_vals)
-        self.m.pop_indent()
 
-        # else
-        self.m.emit_line("} else {")
-        self.m.push_indent()
+        def compile_then_body() -> None:
+            self.m.push_indent()
+            try:
+                then_comp.compile_block(node.body)
+            finally:
+                self.m.pop_indent()
+
+        then_body_lines = capture(compile_then_body)
+
         else_comp = _Compiler(
             self.m,
             {},
@@ -596,15 +644,106 @@ class _Compiler:
             source_stem=self.source_stem,
             line_offset=self.line_offset,
         )
+        else_comp._inline_stack = list(self._inline_stack)
         else_comp.env = dict(pre_env)
-        else_comp.compile_block(node.orelse)
-        else_vals = [_expect_wire(else_comp.env[n], ctx="if else") for n in phi_vars]
-        _emit_scf_yield(self.m, else_vals)
-        self.m.pop_indent()
+
+        def compile_else_body() -> None:
+            self.m.push_indent()
+            try:
+                else_comp.compile_block(node.orelse)
+            finally:
+                self.m.pop_indent()
+
+        else_body_lines = capture(compile_else_body)
+
+        phi_vars = list(assigned)
+
+        expected_types: list[str] = []
+        for name in phi_vars:
+            pre_v = pre_env.get(name)
+            if isinstance(pre_v, Wire):
+                expected_types.append(pre_v.ty)
+                continue
+            if isinstance(pre_v, Signal):
+                expected_types.append(pre_v.ty)
+                continue
+            if pre_v is not None and not isinstance(pre_v, (int, bool)):
+                raise JitError(
+                    f"if assigns {name!r} under a dynamic condition, but it is not a Wire/int/bool "
+                    "(define it as a Wire before the if, or make the condition compile-time)"
+                )
+
+            then_v = then_comp.env.get(name)
+            else_v = else_comp.env.get(name)
+            then_ty = value_ty(then_v)
+            else_ty = value_ty(else_v)
+
+            if then_ty is not None and else_ty is not None:
+                if then_ty == else_ty:
+                    expected_types.append(then_ty)
+                    continue
+                if then_ty.startswith("i") and else_ty.startswith("i"):
+                    expected_types.append(f"i{max(self._ty_width(then_ty), self._ty_width(else_ty))}")
+                    continue
+                raise JitError(f"if assigns {name!r} with incompatible types: {then_ty} vs {else_ty}")
+
+            if then_ty is not None:
+                expected_types.append(then_ty)
+                continue
+            if else_ty is not None:
+                expected_types.append(else_ty)
+                continue
+
+            # Fall back to constant inference (missing => 0).
+            tv = then_v if isinstance(then_v, (int, bool)) else 0
+            ev = else_v if isinstance(else_v, (int, bool)) else 0
+            w = max(int_width(int(tv)), int_width(int(ev)))
+            expected_types.append(f"i{w}")
+
+        results: list[str] = []
+        if phi_vars:
+            results = [self.m._tmp() for _ in phi_vars]  # noqa: SLF001
+
+        _emit_scf_if_header(self.m, results, cond, expected_types)
+
+        # then (captured body + captured yield epilogue)
+        then_lines = list(then_body_lines)
+
+        def emit_then_yield() -> None:
+            self.m.push_indent()
+            try:
+                then_vals: list[Wire] = []
+                for name, ty in zip(phi_vars, expected_types):
+                    v = then_comp.env.get(name, 0)
+                    then_vals.append(then_comp._coerce_to_type(v, expected_ty=ty, ctx="if then"))
+                _emit_scf_yield(self.m, then_vals)
+            finally:
+                self.m.pop_indent()
+
+        then_lines.extend(capture(emit_then_yield))
+        self.m._lines.extend(then_lines)  # noqa: SLF001
+
+        # else
+        self.m.emit_line("} else {")
+        else_lines = list(else_body_lines)
+
+        def emit_else_yield() -> None:
+            self.m.push_indent()
+            try:
+                else_vals: list[Wire] = []
+                for name, ty in zip(phi_vars, expected_types):
+                    v = else_comp.env.get(name, 0)
+                    else_vals.append(else_comp._coerce_to_type(v, expected_ty=ty, ctx="if else"))
+                _emit_scf_yield(self.m, else_vals)
+            finally:
+                self.m.pop_indent()
+
+        else_lines.extend(capture(emit_else_yield))
+        self.m._lines.extend(else_lines)  # noqa: SLF001
         self.m.emit_line("}")
 
-        # Merge results back into env.
-        for name, res_ref, ty in zip(phi_vars, results, result_types):
+        # Merge results back into env (including newly introduced names).
+        for name, res_ref, ty in zip(phi_vars, results, expected_types):
             self.env[name] = self._alias_if_wire(Wire(self.m, Signal(ref=res_ref, ty=ty)), base_name=name, node=node)
 
     def compile_for(self, node: ast.For) -> None:
@@ -672,7 +811,7 @@ class _Compiler:
             body_comp.env[name] = Wire(self.m, Signal(ref=arg_ref, ty=w.ty))
         body_comp.compile_block(node.body)
 
-        yield_vals = [_expect_wire(body_comp.env[n], ctx="for yield") for n in assigned]
+        yield_vals = [body_comp._coerce_to_type(body_comp.env[n], expected_ty=ty, ctx="for yield") for n, ty in zip(assigned, result_types)]
         _emit_scf_yield(self.m, yield_vals)
         self.m.pop_indent()
         self.m.emit_line("}")

@@ -9,13 +9,11 @@ def build(m: Circuit) -> None:
     clk_b = m.clock("clk_b")
     rst_b = m.reset("rst_b")
 
-    en = m.const_wire(1, width=1)
-
-    a = m.out("a", clk=clk_a, rst=rst_a, width=8, init=0, en=en)
+    a = m.out("a", clk=clk_a, rst=rst_a, width=8)
     with m.scope("A"):
         a.set(a.out() + 1)
 
-    b = m.out("b", clk=clk_b, rst=rst_b, width=8, init=0, en=en)
+    b = m.out("b", clk=clk_b, rst=rst_b, width=8)
     with m.scope("B"):
         b.set(b.out() + 1)
 

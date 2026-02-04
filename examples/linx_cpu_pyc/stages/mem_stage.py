@@ -3,11 +3,10 @@ from __future__ import annotations
 from pycircuit import Circuit, Wire, jit_inline
 
 from ..pipeline import ExMemRegs, MemWbRegs
-from ..util import Consts
 
 
 @jit_inline
-def build_mem_stage(m: Circuit, *, do_mem: Wire, exmem: ExMemRegs, memwb: MemWbRegs, mem_rdata: Wire, consts: Consts) -> None:
+def build_mem_stage(m: Circuit, *, do_mem: Wire, exmem: ExMemRegs, memwb: MemWbRegs, mem_rdata: Wire) -> None:
     with m.scope("MEM"):
         # Stage inputs.
         op = exmem.op.out()
@@ -20,8 +19,11 @@ def build_mem_stage(m: Circuit, *, do_mem: Wire, exmem: ExMemRegs, memwb: MemWbR
         # Combinational.
         load32 = mem_rdata.trunc(width=32)
         load64 = load32.sext(width=64)
-        mem_val = is_load.select(load64, alu)
-        mem_val = is_store.select(consts.zero64, mem_val)
+        mem_val = alu
+        if is_load:
+            mem_val = load64
+        if is_store:
+            mem_val = 0
 
         # Pipeline regs: MEM/WB.
         memwb.op.set(op, when=do_mem)

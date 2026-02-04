@@ -11,11 +11,12 @@ def build(m: Circuit) -> None:
     sel = m.in_wire("sel", width=1)
 
     with m.scope("COMB"):
-        y = sel.select(a & b, a ^ b)
+        y = a ^ b
+        if sel:
+            y = a & b
 
-    en = m.const_wire(1, width=1)
-    r = m.out("y_reg", domain=dom, width=8, init=0, en=1)
+    r = m.out("y_reg", domain=dom, width=8)
     with m.scope("REG"):
-        r.set(y, when=en)
+        r.set(y)
 
     m.output("y", r.out())

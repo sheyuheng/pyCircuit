@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pycircuit import Circuit, Reg, Wire
+from pycircuit import Circuit, Reg, Vec, Wire, jit_inline
 from pycircuit.dsl import Signal
 
 from .isa import REG_INVALID
@@ -38,13 +38,27 @@ def read_reg(m: Circuit, code: Wire, *, gpr: list[Reg], t: list[Reg], u: list[Re
     return v
 
 
-def stack_next(m: Circuit, arr: list[Reg], *, do_push: Wire, do_clear: Wire, value: Wire) -> list[Wire]:
-    zero64 = m.const_wire(0, width=64)
-    n0 = do_clear.select(zero64, do_push.select(value, arr[0]))
-    n1 = do_clear.select(zero64, do_push.select(arr[0], arr[1]))
-    n2 = do_clear.select(zero64, do_push.select(arr[1], arr[2]))
-    n3 = do_clear.select(zero64, do_push.select(arr[2], arr[3]))
-    return [n0, n1, n2, n3]
+@jit_inline
+def stack_next(m: Circuit, arr: list[Reg], *, do_push: Wire, do_clear: Wire, value: Wire) -> Vec:
+    n0 = arr[0].out()
+    n1 = arr[1].out()
+    n2 = arr[2].out()
+    n3 = arr[3].out()
+
+    if do_push:
+        n3 = n2
+        n2 = n1
+        n1 = n0
+        n0 = value
+
+    # Clear overrides push (matches previous priority).
+    if do_clear:
+        n0 = 0
+        n1 = 0
+        n2 = 0
+        n3 = 0
+
+    return m.vec(n0, n1, n2, n3)
 
 
 def commit_gpr(m: Circuit, gpr: list[Reg], *, do_reg_write: Wire, regdst: Reg, value: Reg) -> None:

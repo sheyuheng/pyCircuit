@@ -3,6 +3,7 @@
 #include "pyc/Dialect/PYC/PYCOps.h"
 #include "pyc/Dialect/PYC/PYCTypes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Types.h"
@@ -114,6 +115,13 @@ static LogicalResult emitCombAssign(Operation &op, llvm::raw_ostream &os, NameTa
   if (auto m = dyn_cast<pyc::MuxOp>(op)) {
     os << "    " << nt.get(m.getResult()) << " = (" << nt.get(m.getSel()) << ".toBool() ? " << nt.get(m.getA())
        << " : " << nt.get(m.getB()) << ");\n";
+    return success();
+  }
+  if (auto s = dyn_cast<arith::SelectOp>(op)) {
+    if (!s.getCondition().getType().isInteger(1))
+      return s.emitError("C++ emitter only supports arith.select with i1 condition");
+    os << "    " << nt.get(s.getResult()) << " = (" << nt.get(s.getCondition()) << ".toBool() ? " << nt.get(s.getTrueValue())
+       << " : " << nt.get(s.getFalseValue()) << ");\n";
     return success();
   }
   if (auto a = dyn_cast<pyc::AndOp>(op)) {
@@ -386,7 +394,8 @@ static LogicalResult emitFunc(func::FuncOp f, llvm::raw_ostream &os) {
             pyc::ZextOp,
             pyc::SextOp,
             pyc::ExtractOp,
-            pyc::ShliOp>(op)) {
+            pyc::ShliOp,
+            arith::SelectOp>(op)) {
       if (failed(emitCombAssign(op, os, nt)))
         return failure();
       continue;
@@ -395,7 +404,7 @@ static LogicalResult emitFunc(func::FuncOp f, llvm::raw_ostream &os) {
       // Primitives are evaluated in eval(), and regs only tick.
       continue;
     }
-    return op.emitError("unsupported op for C++ emission");
+    return op.emitError("unsupported op for C++ emission: ") << op.getName();
   }
   os << "  }\n\n";
 

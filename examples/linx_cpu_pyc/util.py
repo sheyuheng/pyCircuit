@@ -31,6 +31,5 @@ def make_consts(m: Circuit) -> Consts:
     )
 
 
-def masked_eq(m: Circuit, x: Wire, *, width: int, mask: int, match: int) -> Wire:
-    c = m.const_wire
-    return (x & c(mask, width=width)).eq(c(match, width=width))
+def masked_eq(x: Wire, *, mask: int, match: int) -> Wire:
+    return (x & int(mask)).eq(int(match))
